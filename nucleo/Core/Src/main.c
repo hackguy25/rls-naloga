@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include <stdio.h>
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -79,7 +80,6 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -94,16 +94,59 @@ int main(void)
   MX_USART2_UART_Init();
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
-
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
-	  HAL_UART_Transmit(&huart2, "Henlo!\r\n", 8, HAL_MAX_DELAY);
-	  HAL_Delay(200);
+	  // Buffer for the SPI message.
+	  uint8_t bytes[6] = {0};
+	  // Buffer for the UART message towards the PC.
+	  char msg[23] = {0};
+	  // Buffer for the UART message towards the MCU.
+	  // This is used as a sample trigger:
+	  // Every time a character is received, a new measurement is performed.
+	  uint8_t serial_response[2] = {0};
+	  // HAL status for error checking.
+	  // Only SPI is checked, as there is no good way to report that UART is not working.
+	  HAL_StatusTypeDef status = HAL_OK;
+
+	  // Trigger a new encoder measurement.
+	  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET);
+	  // Small delay, to respect t_s.
+	  HAL_Delay(1);
+
+	  // Receive the measurement.
+	  // We are receiving all 6 bytes, containing the multiturn counter,
+	  // encoder position, error and warning bits, and the inverted CRC.
+	  status = HAL_SPI_Receive(&hspi1, bytes, 6, HAL_MAX_DELAY);
+	  if (HAL_OK != status)
+	  {
+		  // Reading from SPI failed.
+		  // Disable the encoder.
+		  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
+		  // Transmit an error.
+		  snprintf(msg, 23, "err SPI recv: %4d\r\n", status);
+		  HAL_UART_Transmit(&huart2, (uint8_t *)msg, 20, HAL_MAX_DELAY);
+		  // Back off for a while and continue looping.
+		  HAL_Delay(100);
+		  continue;
+	  }
+
+	  // Disable the encoder.
+	  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
+
+	  // Send the measurement over UART.
+	  snprintf(msg, 23, "ok %02x %02x %02x %02x %02x %02x\r\n",
+			   bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]);
+	  HAL_UART_Transmit(&huart2, (uint8_t *)msg, 22, HAL_MAX_DELAY);
+
+	  // Wait for a new measurement signal, or time out after one second.
+	  HAL_UART_Receive(&huart2, serial_response, 1, 1000);
+
+	  // Small delay, to respect t_p.
+	  HAL_Delay(1);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -176,9 +219,9 @@ static void MX_SPI1_Init(void)
   hspi1.Instance = SPI1;
   hspi1.Init.Mode = SPI_MODE_MASTER;
   hspi1.Init.Direction = SPI_DIRECTION_2LINES;
-  hspi1.Init.DataSize = SPI_DATASIZE_4BIT;
+  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
-  hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi1.Init.CLKPhase = SPI_PHASE_2EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
   hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_64;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
@@ -250,11 +293,21 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(SPI1_NCS_GPIO_Port, SPI1_NCS_Pin, GPIO_PIN_SET);
+
   /*Configure GPIO pin : B1_Pin */
   GPIO_InitStruct.Pin = B1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : SPI1_NCS_Pin */
+  GPIO_InitStruct.Pin = SPI1_NCS_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(SPI1_NCS_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
